@@ -1,0 +1,14 @@
+# Ignore datasets (they are too big for git)
+data/
+*.parquet
+*.csv
+
+# Ignore secrets and configs
+clearml.conf
+.env
+
+# Ignore Python cache and build files
+__pycache__/
+*.pyc
+venv/
+.ipynb_checkpoints/
