@@ -4,7 +4,6 @@ This project predicts the Remaining Useful Life (RUL) of metro train compressors
 
 ## Architecture
 - **Tracking:** ClearML (Hosted)
-- **Compute:** Google Colab (T4 GPU)
 - **Models:** Lasso, Random Forest, LSTM
 
 ## How to Run
