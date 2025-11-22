@@ -1,14 +1,23 @@
-# Ignore datasets (they are too big for git)
+# Ignore Virtual Environments (The 1GB DLLs)
+venv/
+venv_fix/
+env/
+
+# Ignore Model Artifacts (The 2.5GB file)
+*.pkl
+*.keras
+*.h5
+*.joblib
+models/
+
+# Ignore Data
 data/
 *.parquet
 *.csv
 
-# Ignore secrets and configs
-clearml.conf
-.env
-
-# Ignore Python cache and build files
+# Ignore IDE and Cache
 __pycache__/
 *.pyc
-venv/
-.ipynb_checkpoints/
+.vscode/
+.idea/
+clearml.conf
