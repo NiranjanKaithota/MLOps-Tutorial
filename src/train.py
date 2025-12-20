@@ -19,6 +19,9 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout
 
 # MLOps Import
 from clearml import Task
+# Evidently for monitoring
+from evidently.report import Report
+from evidently.metric_preset import DataDriftPreset, RegressionPreset
 
 # --------------------------------------------------------------------------------
 # 1. ARGUMENT PARSING & CLEARML SETUP
@@ -83,7 +86,7 @@ def train(model_name, sequence_length=30):
     print(f"🚀 Starting training pipeline for: {model_name}")
     
     # --- A. Load Data ---
-    data_path = 'data/engineered_data.parquet'
+    data_path = 'data\\engineered_data.parquet'
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"Could not find {data_path}. Did you copy your 12MB parquet file into the 'data' folder?")
         
@@ -176,6 +179,34 @@ def train(model_name, sequence_length=30):
     logger.report_scalar(title="Performance", series="MAE", value=mae, iteration=1)
     logger.report_scalar(title="Performance", series="R2 Score", value=r2, iteration=1)
     logger.report_scalar(title="System", series="Training Time", value=training_duration, iteration=1)
+    
+    # --- F. Evidently Reports (Data Drift + Regression Performance) ---
+    try:
+        # Ensure preds is a 1d array
+        preds_arr = np.array(preds).ravel()
+
+        test_predictions_df = test_df.copy()
+        test_predictions_df['prediction'] = preds_arr
+
+        # Create a combined report with data drift and regression performance
+        report = Report(metrics=[DataDriftPreset(), RegressionPreset()])
+
+        # Run report: reference=train, current=test (with predictions)
+        report.run(reference_data=train_df.reset_index(drop=True),
+                   current_data=test_predictions_df.reset_index(drop=True))
+
+        report_name = f"evidently_report_{model_name}.html"
+        report.save_html(report_name)
+        print(f"Evidently report saved as {report_name}")
+
+        # Upload the report as an artifact to ClearML
+        try:
+            task.upload_artifact(name=f"evidently_report_{model_name}", artifact_object=report_name)
+        except Exception:
+            # Not critical if upload fails locally
+            print("Warning: failed to upload Evidently report to ClearML task.")
+    except Exception as e:
+        print(f"Evidently report generation failed: {e}")
     
     # Save and upload model artifact
     save_model_artifact(model, model_name)

@@ -11,7 +11,7 @@ env/
 models/
 
 # Ignore Data
-data/
+#data/
 *.parquet
 *.csv
 

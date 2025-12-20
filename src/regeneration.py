@@ -6,8 +6,8 @@ import os
 # CONFIGURATION
 # ==========================================
 # Replace this with the actual path to your 1.5GB CSV file
-RAW_DATA_PATH = "D:\Projects\EL Models\MLOps\Old\metropt_data\dataset_train_ORG.csv" 
-OUTPUT_PATH = "data/engineered_data.parquet"
+RAW_DATA_PATH = r"C:\\Users\\nisha\\OneDrive\\Documents\\MLOps-Tutorial\\data\\dataset_train.csv"
+OUTPUT_PATH = "data\engineered_data.parquet"
 
 def regenerate_dataset():
     print(f"🚀 Starting Data Regeneration from: {RAW_DATA_PATH}")
