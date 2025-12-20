@@ -1,56 +1,92 @@
 import argparse
 import pandas as pd
-import numpy as np
 import os
-
-from evidently.report import Report
-from evidently.metric_preset import DataDriftPreset, RegressionPreset
-
-# Optional ClearML upload
+from clearml import Task
 try:
-    from clearml import Task
-    CLEARML_AVAILABLE = True
-except Exception:
-    CLEARML_AVAILABLE = False
+    # Try new API (Evidently 0.7+)
+    from evidently import Report
+    from evidently.presets import DataDriftPreset
+except ImportError:
+    try:
+        # Try old API (Evidently < 0.7)
+        from evidently.report import Report
+        from evidently.metric_preset import DataDriftPreset
+    except ImportError as e:
+        print(f"❌ Could not import Evidently modules: {e}")
+        print("💡 Ensure you have evidently installed: pip install evidently>=0.4.0")
+        exit(1)
 
-
-def main(reference_path, current_path, report_name, upload):
+def run_monitor(reference_path, current_path, report_path, upload):
+    # Load Reference Data
     if not os.path.exists(reference_path):
-        raise FileNotFoundError(f"Reference file not found: {reference_path}")
-    if not os.path.exists(current_path):
-        raise FileNotFoundError(f"Current file not found: {current_path}")
+        raise FileNotFoundError(f"Could not find reference data at {reference_path}")
+    
+    reference_data = pd.read_parquet(reference_path)
+    
+    # Handle Current Data (Split or Load)
+    if current_path:
+        if not os.path.exists(current_path):
+            raise FileNotFoundError(f"Could not find current data at {current_path}")
+        current_data = pd.read_parquet(current_path)
+    else:
+        print("ℹ️ No current data provided. Using 50/50 split of reference data for demo.")
+        if len(reference_data) < 2:
+            raise ValueError("Not enough data for drift detection")
+        midpoint = len(reference_data) // 2
+        current_data = reference_data.iloc[midpoint:].reset_index(drop=True)
+        reference_data = reference_data.iloc[:midpoint].reset_index(drop=True)
 
-    ref = pd.read_parquet(reference_path) if reference_path.endswith('.parquet') else pd.read_csv(reference_path)
-    cur = pd.read_parquet(current_path) if current_path.endswith('.parquet') else pd.read_csv(current_path)
+    # Filter out columns that naturally drift (Time)
+    drop_cols = ['timestamp', 'failure_column'] # failure_column might be static metadata
+    reference_data = reference_data.drop(columns=[c for c in drop_cols if c in reference_data.columns], errors='ignore')
+    current_data = current_data.drop(columns=[c for c in drop_cols if c in current_data.columns], errors='ignore')
 
-    # Ensure predictions are present in current data
-    if 'prediction' not in cur.columns:
-        raise ValueError("Current data must contain a 'prediction' column. Provide predictions in the current file or use a different workflow to generate them.")
+    print(f"🕵️ Monitoring Drift: Reference({len(reference_data)}) vs Current({len(current_data)})")
 
-    report = Report(metrics=[DataDriftPreset(), RegressionPreset()])
-    report.run(reference_data=ref.reset_index(drop=True), current_data=cur.reset_index(drop=True))
+    # Generate Report
+    report = Report(metrics=[
+        DataDriftPreset()
+    ])
 
-    report.save_html(report_name)
-    print(f"Evidently monitoring report saved to: {report_name}")
+    # Generate Report
+    report = Report(metrics=[
+        DataDriftPreset()
+    ])
 
+    results = report.run(
+        reference_data=reference_data,
+        current_data=current_data
+    )
+
+    # Evidently 0.7+ returns a result object, older versions run in-place
+    if results is not None:
+        results.save_html(report_path)
+    else:
+        report.save_html(report_path)
+        
+    print(f"✅ Data drift report generated: {report_path}")
+
+    # Upload to ClearML if requested
     if upload:
-        if not CLEARML_AVAILABLE:
-            print("ClearML is not available in this environment; skipping upload.")
-            return
-        try:
-            task = Task.init(project_name="Monitoring", task_name=f"Evidently Report - {os.path.basename(report_name)}", reuse_last_task_id=False)
-            task.upload_artifact(name=os.path.basename(report_name), artifact_object=report_name)
-            print("Report uploaded to ClearML task.")
-        except Exception as e:
-            print(f"Failed to upload report to ClearML: {e}")
+        print("🚀 Initializing ClearML Task...")
+        task = Task.init(
+            project_name="MetroPT Maintenance",
+            task_name="Data Drift Check",
+            reuse_last_task_id=False
+        )
+        task.upload_artifact(
+            name="Evidently Data Drift Report",
+            artifact_object=report_path
+        )
+        print("✅ Report uploaded to ClearML")
 
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--reference', required=True, help='Path to reference dataset (parquet or csv)')
-    parser.add_argument('--current', required=True, help='Path to current dataset (must contain a prediction column)')
-    parser.add_argument('--report', default='evidently_monitor_report.html', help='Output HTML report name')
-    parser.add_argument('--upload', action='store_true', help='If set and ClearML is available, upload the report as an artifact')
-
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run Evidently Data Drift Monitoring")
+    parser.add_argument("--reference", type=str, default="data/engineered_data.parquet", help="Path to reference data")
+    parser.add_argument("--current", type=str, default=None, help="Path to current data (optional)")
+    parser.add_argument("--report", type=str, default="data_drift_report.html", help="Output path for HTML report")
+    parser.add_argument("--upload", action="store_true", help="Upload report to ClearML")
+    
     args = parser.parse_args()
-    main(args.reference, args.current, args.report, args.upload)
+    
+    run_monitor(args.reference, args.current, args.report, args.upload)
