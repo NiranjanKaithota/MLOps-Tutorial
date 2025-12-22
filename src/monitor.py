@@ -29,12 +29,21 @@ def run_monitor(reference_path, current_path, report_path, upload):
             raise FileNotFoundError(f"Could not find current data at {current_path}")
         current_data = pd.read_parquet(current_path)
     else:
-        print("ℹ️ No current data provided. Using 50/50 split of reference data for demo.")
-        if len(reference_data) < 2:
-            raise ValueError("Not enough data for drift detection")
-        midpoint = len(reference_data) // 2
-        current_data = reference_data.iloc[midpoint:].reset_index(drop=True)
-        reference_data = reference_data.iloc[:midpoint].reset_index(drop=True)
+        # print("ℹ️ No current data provided. Using 50/50 split of reference data for demo.")
+        # if len(reference_data) < 2:
+        #     raise ValueError("Not enough data for drift detection")
+        # midpoint = len(reference_data) // 2
+        # current_data = reference_data.iloc[midpoint:].reset_index(drop=True)
+        # reference_data = reference_data.iloc[:midpoint].reset_index(drop=True)
+        print("ℹ️ No current data provided. Using 75/25 split (Training vs Production).")
+        
+        # CHANGE: Use 0.75 instead of // 2
+        split_point = int(len(reference_data) * 0.75)
+        
+        # The first 75% is what we trained on (Reference)
+        # The last 25% is the "Live" data we are simulating (Current)
+        current_data = reference_data.iloc[split_point:].reset_index(drop=True)
+        reference_data = reference_data.iloc[:split_point].reset_index(drop=True)
 
     # Filter out columns that naturally drift (Time)
     drop_cols = ['timestamp', 'failure_column'] # failure_column might be static metadata

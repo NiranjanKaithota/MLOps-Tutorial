@@ -1,92 +1,100 @@
 import pandas as pd
 import numpy as np
-import os
 
-# ==========================================
-# CONFIGURATION
-# ==========================================
-# Replace this with the actual path to your 1.5GB CSV file
-RAW_DATA_PATH = r"C:\\Users\\nisha\\OneDrive\\Documents\\MLOps-Tutorial\\data\\dataset_train.csv"
-OUTPUT_PATH = "data\engineered_data.parquet"
+def regenerate_data():
+    print("🚀 Starting Data Regeneration Pipeline...")
 
-def regenerate_dataset():
-    print(f"🚀 Starting Data Regeneration from: {RAW_DATA_PATH}")
-    
-    # 1. Load Data (Read CSV)
-    # The MetroPT dataset usually has a 'timestamp' column. Adjust if needed.
+    # 1. Load Raw Data
+    raw_path = "data/metropt_raw.csv"
+    print(f"📂 Loading raw data from {raw_path}...")
     try:
-        df = pd.read_csv(RAW_DATA_PATH)
-        print(f"✅ Raw Data Loaded. Shape: {df.shape}")
+        df = pd.read_csv(raw_path)
+        # print(f"   📊 Original Row Count: {len(df)}")
     except FileNotFoundError:
-        print(f"❌ Error: Could not find raw file at {RAW_DATA_PATH}")
-        print("Please update the RAW_DATA_PATH variable in the script.")
+        print("❌ Error: File not found.")
         return
 
-    # 2. Convert Timestamp
-    print("Converting timestamps...")
-    # Adjust 'timestamp' to the actual column name in your CSV (e.g., 'time', 'ts')
-    time_col = 'timestamp' 
-    if time_col not in df.columns:
-        # MetroPT often has 'timestamp' as the first column
-        time_col = df.columns[0]
+    # 2. Fix Timestamp
+    print("🕒 Parsing timestamps...")
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
     
-    df[time_col] = pd.to_datetime(df[time_col])
+    # --- SMART YEAR DETECTION ---
+    data_year = df['timestamp'].iloc[0].year
+    print(f"   ℹ️ Detected Data Year: {data_year}")
     
-    # 3. Downsample (1 datapoint every 10 seconds)
-    print("📉 Downsampling to 10s intervals...")
-    df = df.set_index(time_col)
+    # Base failures are from 2020. We calculate the offset.
+    # If data is 2022, we shift failures by +2 years.
+    year_offset = data_year - 2020
     
-    # Resample: Take the mean of sensors, and 'max' for binary failure flags
-    # We assume 'failure' or 'anomaly' columns exist. If not, this will just average everything.
-    df_resampled = df.resample('10s').mean()
+    # 3. Label Failures (With Year Shift)
+    print(f"🏷️ Labeling failure events (Shifted by {year_offset} years)...")
+    df['failure'] = 0
     
-    # If you had binary columns (0 or 1), averaging makes them 0.1, 0.2 etc.
-    # Let's fix failure column if it exists
-    if 'failure' in df_resampled.columns:
-        df_resampled['failure'] = df_resampled['failure'].apply(lambda x: 1 if x > 0 else 0)
-
-    # Drop NaNs created by resampling gaps
-    df_resampled = df_resampled.dropna()
+    # Original 2020 Failure Windows
+    base_failures = [
+        ("2020-04-18 00:00:00", "2020-04-18 23:59:00"), # Failure 1
+        ("2020-05-29 23:30:00", "2020-05-30 06:00:00"), # Failure 2
+        ("2020-06-05 10:00:00", "2020-06-07 14:30:00"), # Failure 3
+        ("2020-07-15 14:30:00", "2020-07-15 19:00:00")  # Failure 4
+    ]
     
-    print(f"✅ Resampled Data Shape: {df_resampled.shape}")
-
-    # 4. Feature Engineering (RUL)
-    # Re-create RUL logic here to ensure it's in the file
-    print("⚙️ Engineering RUL...")
-    
-    # Simple Logic: If 'failure' exists, count down. 
-    # If not, create a dummy or logic based on sensor drift.
-    if 'failure' in df_resampled.columns:
-        # Calculate RUL based on failure markers
-        failure_indices = np.where(df_resampled['failure'] == 1)[0]
-        rul_col = np.full(len(df_resampled), 150.0) # Default cap
+    # Apply Offset
+    shifted_failures = []
+    for start, end in base_failures:
+        s = pd.Timestamp(start) + pd.DateOffset(years=year_offset)
+        e = pd.Timestamp(end) + pd.DateOffset(years=year_offset)
+        shifted_failures.append((s, e))
         
-        # (Simplified RUL logic for regeneration)
-        # Real logic would be: find next failure index - current index
-        pass 
-    else:
-        # If no failure column, create a synthetic one for the tutorial
-        # (Or use your specific logic if you have it)
-        print("⚠️ No 'failure' column found. Creating synthetic RUL for training...")
-        # Create RUL based on index (just to have a target)
-        df_resampled['RUL'] = np.linspace(100, 0, len(df_resampled))
+        # Mark failure in dataframe
+        mask = (df['timestamp'] >= s) & (df['timestamp'] <= e)
+        df.loc[mask, 'failure'] = 1
+        
+    print(f"   First Failure Target shifted to: {shifted_failures[0][0]}")
 
-    # 5. Save to Parquet (Safely)
-    print(f"💾 Saving to {OUTPUT_PATH}...")
+    # 4. Calculate RUL
+    print("⏳ Calculating RUL (Backfill Method)...")
     
-    # Ensure directory exists
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    # Create a "Next Failure Time" column initialized with NaNs
+    df['next_failure'] = np.nan
     
-    # Write
-    df_resampled.to_parquet(OUTPUT_PATH, index=False)
+    # At every failure row, set 'next_failure' to the current time
+    df.loc[df['failure'] == 1, 'next_failure'] = df.loc[df['failure'] == 1, 'timestamp']
     
-    # 6. Verification
-    print("🔍 Verifying file...")
-    try:
-        check_df = pd.read_parquet(OUTPUT_PATH)
-        print(f"✅ Success! File saved and verified. Size: {os.path.getsize(OUTPUT_PATH) / (1024*1024):.2f} MB")
-    except Exception as e:
-        print(f"❌ File Verification Failed: {e}")
+    # Backfill: For every healthy row, 'next_failure' becomes the nearest FUTURE failure time
+    df['next_failure'] = df['next_failure'].bfill()
+    
+    # Calculate difference in hours
+    df['RUL'] = (df['next_failure'] - df['timestamp']).dt.total_seconds() / 3600.0
+    
+    # Fill remaining NaNs (rows after the last failure) with 0
+    df['RUL'] = df['RUL'].fillna(0)
+    
+    # Drop the helper column
+    df.drop(columns=['next_failure'], inplace=True)
+    
+    # Clip RUL to 120h (Piecewise Linear) to help the model
+    df['RUL'] = df['RUL'].clip(upper=120)
+
+    # 5. Drop Useless Features
+    print("🧹 Dropping GPS and Metadata...")
+    useless_cols = ['gpsLat', 'gpsLong', 'gpsQuality', 'gpsSpeed', 'Oil_level', 'Caudal_impulses']
+    df.drop(columns=[c for c in useless_cols if c in df.columns], inplace=True)
+
+    # 6. Downsample (CRITICAL for RAM)
+    print("📉 Downsampling to 10s intervals...")
+    # Resample to 10s and take the mean
+    df = df.set_index('timestamp').resample('10s').mean().reset_index()
+    # Remove empty gaps
+    df = df.dropna()
+    # Fix failure binary (mean might make it 0.1, force to 0 or 1)
+    df['failure'] = (df['failure'] > 0).astype(int)
+
+    # 7. Save
+    output_path = "data/engineered_data.parquet"
+    print(f"💾 Saving to {output_path}...")
+    df.to_parquet(output_path, index=False)
+    
+    print(f"✅ Success! Processed {len(df)} rows.")
 
 if __name__ == "__main__":
-    regenerate_dataset()
+    regenerate_data()

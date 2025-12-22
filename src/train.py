@@ -73,12 +73,26 @@ def train(model_name, sequence_length=30):
     df = pd.read_parquet(data_path)
     
     target_column = 'RUL'
-    # Exclude non-feature columns
-    feature_columns = [col for col in df.columns if col not in [target_column, 'failure', 'timestamp', 'failure_column']]
+    # Exclude metadata columns
+    # Note: We assume GPS/Oil columns were already dropped in process_data.py
+    exclude_cols = [target_column, 'failure', 'timestamp', 'failure_column']
+    feature_columns = [col for col in df.columns if col not in exclude_cols]
 
-    # Split Data
-    train_val_df, test_df = train_test_split(df, test_size=0.15, random_state=42)
-    train_df, val_df = train_test_split(train_val_df, test_size=(0.15/0.85), random_state=42)
+    # -------------------------------------------------------
+    # Chronological Split (75% Past / 25% Future)
+    # -------------------------------------------------------
+    split_point = int(len(df) * 0.75)
+    
+    # "Past" Data (First 75%) - For Training
+    train_val_df = df.iloc[:split_point].copy()
+    
+    # "Future" Data (Last 25%) - STRICTLY for Final Testing
+    test_df = df.iloc[split_point:].copy()
+    
+    # Random split "Past" data into Train/Validation
+    train_df, val_df = train_test_split(train_val_df, test_size=0.2, random_state=42)
+
+    print(f"📊 Data Split: Train({len(train_df)}), Val({len(val_df)}), Test({len(test_df)})")
 
     # Scale Data
     scaler = StandardScaler()
@@ -90,6 +104,7 @@ def train(model_name, sequence_length=30):
     model = None
     preds = None
 
+    # --- MODEL SELECTION ---
     if model_name == 'lasso':
         model = Lasso(alpha=0.1, random_state=42)
         model.fit(train_df[feature_columns], train_df[target_column])
@@ -116,19 +131,26 @@ def train(model_name, sequence_length=30):
         model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=20, batch_size=64,
                   callbacks=[tf.keras.callbacks.EarlyStopping(patience=3)])
         
-        preds = model.predict(X_test)
+        preds = model.predict(X_test).flatten()
         test_df = test_df.iloc[sequence_length:]
 
-    # Evaluation
-    training_duration = time.time() - start_time
+    # --------------------------------------------------------------------
+    # 4. METRICS CALCULATION (REGRESSION ONLY)
+    # --------------------------------------------------------------------
     rmse = np.sqrt(mean_squared_error(test_df[target_column], preds))
     mae = mean_absolute_error(test_df[target_column], preds)
     r2 = r2_score(test_df[target_column], preds)
 
-    print(f"MODEL: {model_name.upper()} | RMSE: {rmse:.4f} | R2: {r2:.4f}")
+    print(f"\n📈 MODEL PERFORMANCE: {model_name.upper()}")
+    print(f"   RMSE: {rmse:.4f}")
+    print(f"   MAE:  {mae:.4f}")
+    print(f"   R2:   {r2:.4f}")
 
-    # Logging
+    # --------------------------------------------------------------------
+    # 5. CLEARML LOGGING
+    # --------------------------------------------------------------------
     logger = task.get_logger()
+    
     logger.report_scalar("Performance", "RMSE", rmse, iteration=1)
     logger.report_scalar("Performance", "MAE", mae, iteration=1)
     logger.report_scalar("Performance", "R2 Score", r2, iteration=1)
