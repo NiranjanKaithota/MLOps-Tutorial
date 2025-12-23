@@ -1,161 +1,191 @@
 import argparse
 import pandas as pd
 import numpy as np
-import time
 import os
 import pickle
-
-# Machine Learning Imports
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import Lasso
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-
-# Deep Learning Imports
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-
-# MLOps Import
+from tensorflow.keras.layers import LSTM, GRU, Conv1D, MaxPooling1D, Flatten, Dense, Dropout, Input
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from tensorflow.keras.preprocessing.sequence import TimeseriesGenerator
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from clearml import Task
 
 # --------------------------------------------------------------------------------
-# 1. ARGUMENT PARSING & CLEARML SETUP
+# CONFIGURATION
 # --------------------------------------------------------------------------------
-parser = argparse.ArgumentParser()
-parser.add_argument("--model", type=str, default="lasso", 
-                    help="Model to train: lasso, random_forest, or lstm")
-args = parser.parse_args()
-
-# Initialize ClearML Task
-task = Task.init(
-    project_name="MetroPT Maintenance", 
-    task_name=f"Training - {args.model}", 
-    reuse_last_task_id=False
-)
-task.connect({"model_type": args.model})
+SEQUENCE_LENGTH = 180  # 30 Minutes of context
+BATCH_SIZE = 256       # Batches per step
+EPOCHS = 12
 
 # --------------------------------------------------------------------------------
-# 2. HELPER FUNCTIONS
+# MODEL ARCHITECTURES
 # --------------------------------------------------------------------------------
-def create_lstm_sequences(data, features, target, sequence_length):
-    X, y = [], []
-    data_array = data[features].values
-    target_array = data[target].values
+def build_lstm(input_shape):
+    model = Sequential([
+        Input(shape=input_shape),
+        LSTM(64, return_sequences=True),
+        Dropout(0.2),
+        LSTM(32, return_sequences=False),
+        Dropout(0.2),
+        Dense(1)
+    ])
+    return model
+
+def build_gru(input_shape):
+    model = Sequential([
+        Input(shape=input_shape),
+        GRU(64, return_sequences=True),
+        Dropout(0.2),
+        GRU(32, return_sequences=False),
+        Dropout(0.2),
+        Dense(1)
+    ])
+    return model
+
+def build_cnn(input_shape):
+    model = Sequential([
+        Input(shape=input_shape),
+        Conv1D(filters=64, kernel_size=3, activation='relu'),
+        MaxPooling1D(pool_size=2),
+        Conv1D(filters=32, kernel_size=3, activation='relu'),
+        MaxPooling1D(pool_size=2),
+        Flatten(),
+        Dense(50, activation='relu'),
+        Dense(1)
+    ])
+    return model
+
+# --------------------------------------------------------------------------------
+# MAIN PIPELINE
+# --------------------------------------------------------------------------------
+def train():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default="lstm", choices=['lstm', 'gru', 'cnn'], help="Choose model type")
+    args = parser.parse_args()
+
+    print(f"🚀 Starting V2 Training Pipeline (Generator Mode) for: {args.model.upper()}...")
     
-    for i in range(len(data) - sequence_length):
-        X.append(data_array[i : i + sequence_length])
-        y.append(target_array[i + sequence_length - 1])
-        
-    return np.array(X), np.array(y)
+    # Initialize ClearML
+    task = Task.init(project_name="MetroPT Maintenance V2", task_name=f"{args.model.upper()} Generator Training")
+    task.connect({"sequence_length": SEQUENCE_LENGTH, "batch_size": BATCH_SIZE, "model_type": args.model})
 
-def save_model_artifact(model, model_name):
-    filename = f"{model_name}_model.pkl"
-    if model_name == 'lstm':
-        filename = f"{model_name}_model.keras"
-        model.save(filename)
-    else:
-        with open(filename, 'wb') as f:
-            pickle.dump(model, f)
-    print(f"Model saved locally as {filename}")
-
-# --------------------------------------------------------------------------------
-# 3. MAIN TRAINING LOGIC
-# --------------------------------------------------------------------------------
-def train(model_name, sequence_length=30):
-    print(f"🚀 Starting training pipeline for: {model_name}")
-    
+    # 1. Load Data
     data_path = 'data/engineered_data.parquet'
     if not os.path.exists(data_path):
-        raise FileNotFoundError(f"Could not find {data_path}")
-        
+        raise FileNotFoundError(f"{data_path} not found.")
+    
     df = pd.read_parquet(data_path)
-    
-    target_column = 'RUL'
-    # Exclude metadata columns
-    # Note: We assume GPS/Oil columns were already dropped in process_data.py
-    exclude_cols = [target_column, 'failure', 'timestamp', 'failure_column']
-    feature_columns = [col for col in df.columns if col not in exclude_cols]
 
-    # -------------------------------------------------------
-    # Chronological Split (75% Past / 25% Future)
-    # -------------------------------------------------------
-    split_point = int(len(df) * 0.75)
+    # 2. Split Features/Target
+    target_col = 'RUL'
+    exclude_cols = ['timestamp', 'failure', 'RUL'] 
+    feature_cols = [c for c in df.columns if c not in exclude_cols]
     
-    # "Past" Data (First 75%) - For Training
-    train_val_df = df.iloc[:split_point].copy()
+    # 3. Chronological Split (70/30)
+    split_idx = int(len(df) * 0.70)
+    train_df = df.iloc[:split_idx].copy()
+    test_df = df.iloc[split_idx:].copy()
     
-    # "Future" Data (Last 25%) - STRICTLY for Final Testing
-    test_df = df.iloc[split_point:].copy()
-    
-    # Random split "Past" data into Train/Validation
-    train_df, val_df = train_test_split(train_val_df, test_size=0.2, random_state=42)
-
-    print(f"📊 Data Split: Train({len(train_df)}), Val({len(val_df)}), Test({len(test_df)})")
-
-    # Scale Data
+    # 4. Scaling
     scaler = StandardScaler()
-    train_df[feature_columns] = scaler.fit_transform(train_df[feature_columns])
-    val_df[feature_columns] = scaler.transform(val_df[feature_columns])
-    test_df[feature_columns] = scaler.transform(test_df[feature_columns])
+    train_scaled = scaler.fit_transform(train_df[feature_cols])
+    test_scaled = scaler.transform(test_df[feature_cols])
+    
+    # Save scaler
+    with open('scaler.pkl', 'wb') as f:
+        pickle.dump(scaler, f)
 
-    start_time = time.time()
-    model = None
-    preds = None
+    # 5. Create Generators (THE FIX: Zero Memory Overhead)
+    print(f"   Creating Data Generators (Length={SEQUENCE_LENGTH})...")
+    
+    # Train Generator
+    train_gen = TimeseriesGenerator(
+        train_scaled, 
+        train_df[target_col].values,
+        length=SEQUENCE_LENGTH, 
+        batch_size=BATCH_SIZE
+    )
 
-    # --- MODEL SELECTION ---
-    if model_name == 'lasso':
-        model = Lasso(alpha=0.1, random_state=42)
-        model.fit(train_df[feature_columns], train_df[target_column])
-        preds = model.predict(test_df[feature_columns])
-        
-    elif model_name == 'random_forest':
-        model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
-        model.fit(train_df[feature_columns], train_df[target_column])
-        preds = model.predict(test_df[feature_columns])
+    # Test Generator
+    test_gen = TimeseriesGenerator(
+        test_scaled, 
+        test_df[target_col].values,
+        length=SEQUENCE_LENGTH, 
+        batch_size=BATCH_SIZE
+    )
+    
+    print(f"   Train Batches: {len(train_gen)}")
+    print(f"   Test Batches:  {len(test_gen)}")
 
-    elif model_name == 'lstm':
-        X_train, y_train = create_lstm_sequences(train_df, feature_columns, target_column, sequence_length)
-        X_val, y_val = create_lstm_sequences(val_df, feature_columns, target_column, sequence_length)
-        X_test, y_test = create_lstm_sequences(test_df, feature_columns, target_column, sequence_length)
+    # 6. Build Selected Model
+    # Input shape for generator is (Sequence_Length, Num_Features)
+    input_shape = (SEQUENCE_LENGTH, len(feature_cols))
+    
+    if args.model == 'lstm':
+        model = build_lstm(input_shape)
+    elif args.model == 'gru':
+        model = build_gru(input_shape)
+    elif args.model == 'cnn':
+        model = build_cnn(input_shape)
+    
+    model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+    
+    # 7. Train
+    model_filename = f"{args.model}_model.keras"
+    callbacks = [
+        EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True),
+        ModelCheckpoint(model_filename, save_best_only=True, monitor='val_loss')
+    ]
+    
+    # Note: fit() works with generators automatically
+    model.fit(
+        train_gen,
+        validation_data=test_gen,
+        epochs=EPOCHS,
+        callbacks=callbacks,
+        verbose=1
+    )
 
-        model = Sequential([
-            LSTM(50, return_sequences=True, input_shape=(sequence_length, X_train.shape[2])),
-            Dropout(0.2),
-            LSTM(50),
-            Dropout(0.2),
-            Dense(1)
-        ])
-        model.compile(optimizer='adam', loss='mean_squared_error')
-        model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=20, batch_size=64,
-                  callbacks=[tf.keras.callbacks.EarlyStopping(patience=3)])
-        
-        preds = model.predict(X_test).flatten()
-        test_df = test_df.iloc[sequence_length:]
+    # 8. Evaluate
+    print(f"\n📊 Evaluating {args.model.upper()}...")
+    
+    # We must predict on the generator to avoid memory crash
+    preds = model.predict(test_gen)
+    
+    # Generators shuffle data by default? No, TimeseriesGenerator does NOT shuffle order 
+    # BUT it cuts off the first 'sequence_length' rows. 
+    # We need to align y_test with the generator's output.
+    
+    # Get the actual targets corresponding to the generator predictions
+    # The generator starts outputting at index `sequence_length`
+    y_test_aligned = test_df[target_col].values[SEQUENCE_LENGTH:]
+    
+    # Trim predictions if there's a slight batch mismatch (rare but safe to check)
+    preds = preds[:len(y_test_aligned)]
+    
+    rmse = np.sqrt(mean_squared_error(y_test_aligned, preds))
+    mae = mean_absolute_error(y_test_aligned, preds)
+    r2 = r2_score(y_test_aligned, preds)
 
-    # --------------------------------------------------------------------
-    # 4. METRICS CALCULATION (REGRESSION ONLY)
-    # --------------------------------------------------------------------
-    rmse = np.sqrt(mean_squared_error(test_df[target_column], preds))
-    mae = mean_absolute_error(test_df[target_column], preds)
-    r2 = r2_score(test_df[target_column], preds)
-
-    print(f"\n📈 MODEL PERFORMANCE: {model_name.upper()}")
     print(f"   RMSE: {rmse:.4f}")
     print(f"   MAE:  {mae:.4f}")
     print(f"   R2:   {r2:.4f}")
 
-    # --------------------------------------------------------------------
-    # 5. CLEARML LOGGING
-    # --------------------------------------------------------------------
+    # Log to ClearML
+    # logger = task.get_logger()
+    # logger.report_scalar("Comparison", "RMSE", rmse, iteration=1, series=args.model)
+    # logger.report_scalar("Comparison", "R2", r2, iteration=1, series=args.model)
+
+    # Log to ClearML (FIXED)
     logger = task.get_logger()
     
-    logger.report_scalar("Performance", "RMSE", rmse, iteration=1)
-    logger.report_scalar("Performance", "MAE", mae, iteration=1)
-    logger.report_scalar("Performance", "R2 Score", r2, iteration=1)
+    # Title="RMSE Comparison", Series=ModelName (e.g., 'LSTM'), Value=rmse
+    logger.report_scalar("RMSE Comparison", args.model.upper(), rmse, iteration=1)
     
-    save_model_artifact(model, model_name)
+    # Title="R2 Comparison", Series=ModelName, Value=r2
+    logger.report_scalar("R2 Comparison", args.model.upper(), r2, iteration=1)
 
 if __name__ == "__main__":
-    train(args.model)
+    train()
