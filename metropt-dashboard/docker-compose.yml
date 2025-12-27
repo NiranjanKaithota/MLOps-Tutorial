@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  # 1. Python API Service
+  backend:
+    build: ./backend
+    container_name: metropt_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount the models from the PARENT directory into the container
+      - ../gru_model.keras:/app/gru_model.keras
+      - ../cnn_model.keras:/app/cnn_model.keras
+      - ../lstm_model.keras:/app/lstm_model.keras
+      - ../scaler.pkl:/app/scaler.pkl
+      - ../data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  # 2. React Frontend Service
+  frontend:
+    build: .
+    container_name: metropt_frontend
+    ports:
+      - "3000:80" # Map container port 80 to localhost:3000
+    depends_on:
+      - backend

@@ -9,6 +9,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, GRU, Conv1D, MaxPooling1D, Flatten, Dense, Dropout, Input
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
 from tensorflow.keras.preprocessing.sequence import TimeseriesGenerator
+from tensorflow.keras.regularizers import l2
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from clearml import Task 
@@ -104,12 +105,37 @@ def plot_training_history(history, model_name):
 def build_lstm(input_shape):
     model = Sequential([
         Input(shape=input_shape),
-        LSTM(64, return_sequences=True),
+        LSTM(64, return_sequences=True, dropout=0.2, recurrent_dropout = 0.0, kernel_regularizer = l2(0.001)),
         Dropout(0.2),
         LSTM(32, return_sequences=False),
         Dropout(0.2),
         Dense(1)
     ])
+
+    # model = Sequential([
+    #     # Layer 1: LSTM with Dropout and L2 Regularization
+    #     LSTM(50, 
+    #          return_sequences=True, 
+    #          input_shape=(180, X_train.shape[2]),
+    #          dropout=0.2,            # Drops 20% of input units
+    #          recurrent_dropout=0.0,  # Use 0.0 if using CuDNN (GPU), else 0.2
+    #          kernel_regularizer=l2(0.001) # Penalizes large weights
+    #     ),
+
+    #     # Layer 2: Dropout Layer
+    #     Dropout(0.2), 
+
+    #     # Layer 3: Second LSTM Layer
+    #     LSTM(25, 
+    #          return_sequences=False,
+    #          dropout=0.2,
+    #          kernel_regularizer=l2(0.001)
+    #     ),
+
+    #     # Layer 4: Dense Output
+    #     Dense(1)
+    # ])
+
     return model
 
 def build_gru(input_shape):
