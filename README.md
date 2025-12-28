@@ -36,7 +36,7 @@ The system follows a microservices architecture:
 ### Running the App
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/NiranjanKaithota/MLOps-Tutorial.git](https://github.com/NiranjanKaithota/MLOps-Tutorial.git)
+    git clone https://github.com/NiranjanKaithota/MLOps-Tutorial.git
     cd MLOps-Tutorial
     ```
 
@@ -49,11 +49,15 @@ The system follows a microservices architecture:
     Open `http://localhost:3000` in your browser.
 
 ## 📊 Models Performance
-| Model | Type | MAE (Hours) | Status |
-| :--- | :--- | :--- | :--- |
-| **GRU v2.3** | Recurrent | **8.99h** | 🏆 Champion |
-| **LSTM** | Recurrent | 11.2h | Backup |
-| **CNN v1** | Convolutional | 12.1h | Experimental |
+The system utilizes a consensus mechanism across three distinct architectures. Performance metrics are based on the test simulation set (last 25% of dataset).
+
+| Model | Architecture | Accuracy (@24h) | MAE (Hours) | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **LSTM** | Recurrent (w/ Dropout) | **100.0%** | **8.73h** | ⚡ High Precision |
+| **GRU v2.3** | Gated Recurrent | 98.5% | 8.99h | 🏆 Robust Champion |
+| **CNN v1** | 1D Convolutional | 96.0% | 11.1h | ⚠️ Experimental |
+
+* **Consensus Logic:** If both GRU and LSTM predict failure < 24h, the system triggers a **CRITICAL** alert.
 
 ## 🔄 CI/CD Pipeline
 The project includes a GitHub Actions workflow that:
