@@ -111,31 +111,7 @@ def build_lstm(input_shape):
         Dropout(0.2),
         Dense(1)
     ])
-
-    # model = Sequential([
-    #     # Layer 1: LSTM with Dropout and L2 Regularization
-    #     LSTM(50, 
-    #          return_sequences=True, 
-    #          input_shape=(180, X_train.shape[2]),
-    #          dropout=0.2,            # Drops 20% of input units
-    #          recurrent_dropout=0.0,  # Use 0.0 if using CuDNN (GPU), else 0.2
-    #          kernel_regularizer=l2(0.001) # Penalizes large weights
-    #     ),
-
-    #     # Layer 2: Dropout Layer
-    #     Dropout(0.2), 
-
-    #     # Layer 3: Second LSTM Layer
-    #     LSTM(25, 
-    #          return_sequences=False,
-    #          dropout=0.2,
-    #          kernel_regularizer=l2(0.001)
-    #     ),
-
-    #     # Layer 4: Dense Output
-    #     Dense(1)
-    # ])
-
+    
     return model
 
 def build_gru(input_shape):
