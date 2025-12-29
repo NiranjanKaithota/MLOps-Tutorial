@@ -1,45 +1,69 @@
-# MetroPT Predictive Maintenance MLOps
+# 🚇 MetroPulse: MLOps Predictive Maintenance System
 
-This project predicts the Remaining Useful Life (RUL) of metro train compressors using the MetroPT dataset.
+![CI/CD Status](https://github.com/NiranjanKaithota/MLOps-Tutorial/actions/workflows/ci-cd.yml/badge.svg)
+![Python](https://img.shields.io/badge/Python-3.9-blue)
+![React](https://img.shields.io/badge/React-18-cyan)
+![Docker](https://img.shields.io/badge/Docker-Enabled-blue)
 
-## Architecture
-- **Tracking:** ClearML (Hosted)
-- **Models:** Lasso, Random Forest, LSTM
+**MetroPulse** is an end-to-end MLOps platform designed to predict failures in Metro Train Air Production Units (APU). It features a multi-model consensus system (GRU, LSTM, CNN), real-time drift monitoring, and a fully containerized architecture.
 
-## How to Run
-1. Clone this repo in Google Colab.
-2. Install dependencies: `pip install -r requirements.txt`
-3. Set ClearML Credentials using environment variables.
-4. Run `src/train.py`.
+## 🏗️ Architecture
+The system follows a microservices architecture:
+1.  **AI/ML Core:** Trained on the MetroPT-3 dataset using TensorFlow/Keras.
+2.  **Backend (FastAPI):** Handles live data simulation, model inference, and drift detection.
+3.  **Frontend (React + Vite):** A glassmorphic dashboard for real-time visualization.
+4.  **Monitoring:** Integrated **Evidently AI** for data drift detection.
+5.  **DevOps:** Dockerized deployment with Nginx reverse proxy and GitHub Actions CI/CD.
 
-## DVC (Data Version Control) Quick Start
+## 🚀 Key Features
+* **Multi-Model Consensus:** Compares outputs from **GRU (Champion)**, **LSTM**, and **CNN** to reduce false positives.
+* **Live Simulation:** Streams test set data to mimic real-time sensor telemetry.
+* **Drift Detection:** Automatically generates statistical reports when data distribution shifts.
+* **CI/CD Pipeline:** Automated testing and build verification via GitHub Actions.
 
-This project can track large data files and models using DVC. Minimal example commands:
+## 🛠️ Tech Stack
+* **Models:** GRU, LSTM (w/ Dropout), CNN 1D
+* **Backend:** Python, FastAPI, Pandas, Scikit-Learn
+* **Frontend:** TypeScript, React, TailwindCSS, Recharts
+* **Ops:** Docker, Docker Compose, Nginx, GitHub Actions
 
-```powershell
-# initialize dvc in your repo (one-time)
-dvc init
+## 📦 Installation & Setup
 
-# add dataset to dvc (example)
-dvc add data/engineered_data.parquet
+### Prerequisites
+* Docker Desktop installed
+* Git installed
 
-# commit the .dvc file and dvc config to git
-git add data/engineered_data.parquet.dvc .dvc/config
-git commit -m "Track engineered dataset with DVC"
+### Running the App
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/NiranjanKaithota/MLOps-Tutorial.git
+    cd MLOps-Tutorial
+    ```
 
-# push data to remote storage (configure remote first, e.g. dvc remote add -d myremote s3://...)
-dvc push
-```
+2.  **Launch with Docker:**
+    ```bash
+    docker-compose up --build
+    ```
 
-## Monitoring with Evidently
+3.  **Access the Dashboard:**
+    Open `http://localhost:3000` in your browser.
 
-You can produce monitoring reports after training or from a batch of inference results.
+## 📊 Models Performance
+The system utilizes a consensus mechanism across three distinct architectures. Performance metrics are based on the test simulation set (last 25% of dataset).
 
-- Training script generates an Evidently report automatically and saves `evidently_report_<model>.html`.
-- To run monitoring separately: 
+| Model | Architecture | Accuracy (@24h) | MAE (Hours) | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **LSTM** | Recurrent (w/ Dropout) | **100.0%** | **8.73h** | ⚡ High Precision |
+| **GRU v2.3** | Gated Recurrent | 98.5% | 8.99h | 🏆 Robust Champion |
+| **CNN v1** | 1D Convolutional | 96.0% | 11.1h | ⚠️ Experimental |
 
-```powershell
-python src/monitor.py --reference data/engineered_data.parquet --current data/current_batch.parquet --report my_report.html --upload
-```
+* **Consensus Logic:** If both GRU and LSTM predict failure < 24h, the system triggers a **CRITICAL** alert.
 
-The `--upload` flag will upload the report to ClearML if ClearML is available in your environment.
+## 🔄 CI/CD Pipeline
+The project includes a GitHub Actions workflow that:
+1.  **Verifies Backend:** Installs dependencies and runs sanity tests.
+2.  **Builds Frontend:** Ensures the React app compiles without errors.
+3.  **Validation:** Ensures the codebase is production-ready on every push.
+
+---
+*Developed by Niranjan S Kaithota | Nishan U Shetty*
