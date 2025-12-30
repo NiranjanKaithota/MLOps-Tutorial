@@ -13,6 +13,8 @@ services:
       - ../cnn_model.keras:/app/cnn_model.keras
       - ../lstm_model.keras:/app/lstm_model.keras
       - ../scaler.pkl:/app/scaler.pkl
+      - ../scaler_X.pkl:/app/scaler_X.pkl
+      - ../scaler_y.pkl:/app/scaler_y.pkl
       - ../data:/app/data
     environment:
       - PYTHONUNBUFFERED=1

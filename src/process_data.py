@@ -44,7 +44,11 @@ def process_data():
     df.loc[df['failure'] == 1, 'next_failure'] = df.loc[df['failure'] == 1, 'timestamp']
     df['next_failure'] = df['next_failure'].bfill()
     df['RUL'] = (df['next_failure'] - df['timestamp']).dt.total_seconds() / 3600.0
-    df['RUL'] = df['RUL'].fillna(0)
+    # If there's no future failure, previously we filled with 0 which caused
+    # a flat-zero RUL region after the last labeled failure. That was a bug.
+    # Fill missing RUL with the upper cap (120h) so unlabeled future windows
+    # are treated as distant horizon instead of immediate failure.
+    df['RUL'] = df['RUL'].fillna(120.0)
     df.drop(columns=['next_failure'], inplace=True)
 
     # CAP RUL at 120h

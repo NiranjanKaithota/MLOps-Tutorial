@@ -8,7 +8,7 @@ export default defineConfig({
     host: true, // Needed for Docker
     proxy: {
       '/api': {
-        target: 'http://localhost:8000', // Redirect /api -> Python Backend
+        target: 'http://127.0.0.1:8000', // Redirect /api -> Python Backend (use 127.0.0.1 to avoid IPv6 issues)
         changeOrigin: true,
         secure: false,
       },

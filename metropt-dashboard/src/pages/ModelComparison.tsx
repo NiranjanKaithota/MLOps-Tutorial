@@ -2,17 +2,43 @@ import React from 'react';
 import { Trophy, GitCommit, Activity, Server } from 'lucide-react';
 
 export default function ModelComparison() {
+  // Updated with your latest training results
   const models = [
-    { name: "GRU_v2.3", type: "Recurrent", acc: "98.5%", mae: "08.99h", status: "ONLINE", latency: "24ms" },
-    // Update the CNN line if you have new stats for it, otherwise keep or remove
-    { name: "CNN_v1.0", type: "Convolutional", acc: "96.0%", mae: "11.10h", status: "STANDBY", latency: "18ms" },
-    // UPDATE THIS LINE:
-    { name: "LSTM", type: "Recurrent", acc: "100.0%", mae: "08.73h", status: "READY", latency: "28ms" }, 
+    { 
+      name: "LSTM_v2.4", 
+      type: "Recurrent", 
+      acc: "87.0%", 
+      mae: "08.73h", // Kept previous MAE; update if you have new specific MAE data
+      status: "ONLINE", 
+      latency: "28ms",
+      isChampion: true 
+    },
+    { 
+      name: "GRU_v2.3", 
+      type: "Recurrent", 
+      acc: "69.0%", 
+      mae: "08.99h", 
+      status: "STANDBY", 
+      latency: "24ms",
+      isChampion: false 
+    },
+    { 
+      name: "CNN_v1.0", 
+      type: "Convolutional", 
+      acc: "60.0%", 
+      mae: "11.10h", 
+      status: "STANDBY", 
+      latency: "18ms",
+      isChampion: false 
+    },
   ];
+
+  // Dynamically find the champion model (Production)
+  const champion = models.find(m => m.isChampion) || models[0];
 
   return (
     <div className="space-y-8">
-      {/* 1. Champion Node Hero */}
+      {/* 1. Champion Node Hero (Dynamically uses LSTM now) */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-primary/20 via-slate-900 to-slate-900 border border-primary/20 p-8 shadow-glow">
         <div className="absolute top-0 right-0 p-8 opacity-10">
           <Server size={200} className="text-primary" />
@@ -27,19 +53,22 @@ export default function ModelComparison() {
             <div className="flex items-center gap-3 mb-2">
                 <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-primary text-slate-900 uppercase tracking-wider">Production</span>
                 <span className="text-slate-400 text-sm font-mono flex items-center gap-2">
-                    <GitCommit size={14} /> sha256:8f4a...2b1
+                    <GitCommit size={14} /> sha256:7b2...9a1
                 </span>
             </div>
-            <h1 className="text-4xl font-bold text-white tracking-tight">GRU_v2.3</h1>
+            {/* Dynamic Title */}
+            <h1 className="text-4xl font-bold text-white tracking-tight">{champion.name}</h1>
             <div className="flex items-center gap-6 mt-4">
                 <div>
                     <div className="text-xs text-slate-500 uppercase font-bold">Accuracy</div>
-                    <div className="text-2xl text-emerald-400 font-mono font-bold">98.5%</div>
+                    {/* Dynamic Accuracy */}
+                    <div className="text-2xl text-emerald-400 font-mono font-bold">{champion.acc}</div>
                 </div>
                 <div className="w-px h-8 bg-white/10"></div>
                 <div>
                     <div className="text-xs text-slate-500 uppercase font-bold">Mean Error</div>
-                    <div className="text-2xl text-primary font-mono font-bold">±8.99h</div>
+                    {/* Dynamic MAE */}
+                    <div className="text-2xl text-primary font-mono font-bold">±{champion.mae}</div>
                 </div>
             </div>
           </div>
@@ -69,7 +98,9 @@ export default function ModelComparison() {
               <tr key={m.name} className="hover:bg-white/5 transition-colors group">
                 <td className="px-6 py-4 font-bold text-white group-hover:text-primary transition-colors">{m.name}</td>
                 <td className="px-6 py-4 text-slate-400 font-mono text-xs">{m.type}</td>
-                <td className="px-6 py-4 text-emerald-400 font-mono">{m.acc}</td>
+                <td className={`px-6 py-4 font-mono ${parseInt(m.acc) >= 80 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {m.acc}
+                </td>
                 <td className="px-6 py-4 text-slate-300 font-mono">{m.mae}</td>
                 <td className="px-6 py-4 text-slate-500 font-mono">{m.latency}</td>
                 <td className="px-6 py-4 text-right">

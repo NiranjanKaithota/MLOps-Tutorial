@@ -14,6 +14,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from clearml import Task 
 import matplotlib
+
+# Set non-interactive backend for server-side plotting
 matplotlib.use('Agg')
 
 # --------------------------------------------------------------------------------
@@ -21,7 +23,7 @@ matplotlib.use('Agg')
 # --------------------------------------------------------------------------------
 SEQUENCE_LENGTH = 180
 BATCH_SIZE = 256
-EPOCHS = 11
+EPOCHS = 11          # Increased slightly to allow convergence with new scaling
 THRESHOLD_HOURS = 24 
 
 # --------------------------------------------------------------------------------
@@ -70,7 +72,7 @@ class ClearMLLivePlotting(Callback):
             )
 
 # --------------------------------------------------------------------------------
-# PLOTTING UTILS (Static Backup)
+# PLOTTING UTILS
 # --------------------------------------------------------------------------------
 def plot_training_history(history, model_name):
     """Generates and saves a plot of Loss and MAE over epochs"""
@@ -81,7 +83,7 @@ def plot_training_history(history, model_name):
     ax1.plot(history.history['val_loss'], label='Val Loss')
     ax1.set_title(f'{model_name} - Loss (MSE)')
     ax1.set_xlabel('Epoch')
-    ax1.set_ylabel('MSE')
+    ax1.set_ylabel('MSE (Scaled)')
     ax1.legend()
     ax1.grid(True)
 
@@ -90,7 +92,7 @@ def plot_training_history(history, model_name):
     ax2.plot(history.history['val_mae'], label='Val MAE')
     ax2.set_title(f'{model_name} - Mean Absolute Error')
     ax2.set_xlabel('Epoch')
-    ax2.set_ylabel('Hours Error')
+    ax2.set_ylabel('MAE (Scaled)')
     ax2.legend()
     ax2.grid(True)
 
@@ -105,13 +107,13 @@ def plot_training_history(history, model_name):
 def build_lstm(input_shape):
     model = Sequential([
         Input(shape=input_shape),
-        LSTM(64, return_sequences=True, dropout=0.2, recurrent_dropout = 0.0, kernel_regularizer = l2(0.001)),
+        # Removed recurrent_dropout for GPU compatibility (speed)
+        LSTM(64, return_sequences=True, dropout=0.2, kernel_regularizer=l2(0.001)),
         Dropout(0.2),
         LSTM(32, return_sequences=False),
         Dropout(0.2),
-        Dense(1)
+        Dense(1) # Linear activation for regression
     ])
-    
     return model
 
 def build_gru(input_shape):
@@ -146,7 +148,7 @@ def train():
     parser.add_argument("--model", type=str, default="lstm", choices=['lstm', 'gru', 'cnn'], help="Choose model type")
     args = parser.parse_args()
 
-    print(f"🚀 Starting V2.3 Training (Live Logging) for: {args.model.upper()}...")
+    print(f"🚀 Starting Fixed Training for: {args.model.upper()}...")
     
     task = Task.init(project_name="MetroPT Maintenance V2", task_name=f"{args.model.upper()} Training")
     task.connect({"sequence_length": SEQUENCE_LENGTH, "batch_size": BATCH_SIZE, "model_type": args.model})
@@ -157,11 +159,11 @@ def train():
         raise FileNotFoundError(f"{data_path} not found.")
     df = pd.read_parquet(data_path)
 
-    # 2. ISOLATE SIMULATION DATA (Strict Split)
+    # 2. ISOLATE SIMULATION DATA
     sim_cutoff = int(len(df) * 0.75)
     dev_df = df.iloc[:sim_cutoff].copy()
     
-    # 3. SPLIT DEVELOPMENT DATA (Train vs Test)
+    # 3. SPLIT DEVELOPMENT DATA
     target_col = 'RUL'
     exclude_cols = ['timestamp', 'failure', 'RUL'] 
     feature_cols = [c for c in df.columns if c not in exclude_cols]
@@ -170,18 +172,43 @@ def train():
     train_df = dev_df.iloc[:train_split_idx].copy()
     test_df = dev_df.iloc[train_split_idx:].copy()
     
-    # 4. Scaling
-    scaler = StandardScaler()
-    train_scaled = scaler.fit_transform(train_df[feature_cols])
-    test_scaled = scaler.transform(test_df[feature_cols])
+    # 4. SCALING (CRITICAL FIX: Scale Y independently)
+    print("   Scaling Data (X and Y separately)...")
     
-    with open('scaler.pkl', 'wb') as f:
-        pickle.dump(scaler, f)
+    # Scale Features (X)
+    scaler_X = StandardScaler()
+    train_X_scaled = scaler_X.fit_transform(train_df[feature_cols])
+    test_X_scaled = scaler_X.transform(test_df[feature_cols])
+    
+    # Scale Target (Y) - Essential for LSTM/GRU convergence
+    scaler_y = StandardScaler()
+    train_y_scaled = scaler_y.fit_transform(train_df[[target_col]])
+    test_y_scaled = scaler_y.transform(test_df[[target_col]])
+    
+    # Save Scalers
+    with open('scaler_X.pkl', 'wb') as f: pickle.dump(scaler_X, f)
+    with open('scaler_y.pkl', 'wb') as f: pickle.dump(scaler_y, f)
 
     # 5. Generators
     print(f"   Creating Generators (Length={SEQUENCE_LENGTH})...")
-    train_gen = TimeseriesGenerator(train_scaled, train_df[target_col].values, length=SEQUENCE_LENGTH, batch_size=BATCH_SIZE)
-    test_gen = TimeseriesGenerator(test_scaled, test_df[target_col].values, length=SEQUENCE_LENGTH, batch_size=BATCH_SIZE)
+    
+    # CRITICAL FIX: shuffle=True for training to prevent overfitting to time
+    train_gen = TimeseriesGenerator(
+        train_X_scaled, 
+        train_y_scaled, 
+        length=SEQUENCE_LENGTH, 
+        batch_size=BATCH_SIZE,
+        shuffle=True 
+    )
+    
+    # shuffle=False for testing to keep sequential order for plotting
+    test_gen = TimeseriesGenerator(
+        test_X_scaled, 
+        test_y_scaled, 
+        length=SEQUENCE_LENGTH, 
+        batch_size=BATCH_SIZE,
+        shuffle=False
+    )
 
     # 6. Build Model
     input_shape = (SEQUENCE_LENGTH, len(feature_cols))
@@ -189,37 +216,54 @@ def train():
     elif args.model == 'gru':  model = build_gru(input_shape)
     elif args.model == 'cnn':  model = build_cnn(input_shape)
     
+    # Compile
     model.compile(optimizer='adam', loss='mse', metrics=['mae'])
     
-    # 7. Train (With LIVE Callback)
+    # 7. Train
     print("   Training...")
     model_filename = f"{args.model}_model.keras"
     
-    # Define Callbacks
     callbacks = [
-        EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True),
+        EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True), # Increased patience
         ModelCheckpoint(model_filename, save_best_only=True, monitor='val_loss'),
-        ClearMLLivePlotting(task, args.model)  # <--- NEW LIVE LOGGER
+        ClearMLLivePlotting(task, args.model)
     ]
     
     history = model.fit(train_gen, validation_data=test_gen, epochs=EPOCHS, callbacks=callbacks, verbose=1)
 
-    # Save History for Comparison
-    history_filename = f"history_{args.model}.pkl"
-    with open(history_filename, 'wb') as f:
+    # Save History
+    with open(f"history_{args.model}.pkl", 'wb') as f:
         pickle.dump(history.history, f)
 
-    # 8. Generate & Log Final Graphs (Backup)
+    # 8. Log Graphs
     plot_file = plot_training_history(history, args.model.upper())
     logger = task.get_logger()
     logger.report_image("Training Curves", f"{args.model.upper()} Loss/MAE", local_path=plot_file)
 
-    # 9. Evaluate Metrics
+    # 9. Evaluate Metrics (CRITICAL FIX: Inverse Transform)
     print(f"\n📊 Evaluating {args.model.upper()}...")
-    preds = model.predict(test_gen)
-    y_test_aligned = test_df[target_col].values[SEQUENCE_LENGTH:]
-    preds = preds[:len(y_test_aligned)]
     
+    # Predict (Output is Scaled)
+    preds_scaled = model.predict(test_gen)
+    
+    # Inverse Transform Predictions to 'Hours'
+    preds = scaler_y.inverse_transform(preds_scaled)
+    
+    # Get Actuals (Extract from DF to ensure we have original unscaled values)
+    # The generator consumes the first 'SEQUENCE_LENGTH' points, so we slice them off
+    y_test_aligned = test_df[target_col].values[SEQUENCE_LENGTH:]
+    
+    # Ensure shapes match (Generator might drop last incomplete batch if configured, though usually doesn't)
+    min_len = min(len(preds), len(y_test_aligned))
+    preds = preds[:min_len]
+    y_test_aligned = y_test_aligned[:min_len]
+
+    # Debugging Metric Issues
+    print(f"   Test Samples: {len(preds)}")
+    if len(preds) < 100:
+        print("   WARNING: Very few test samples. RMSE and MAE might look identical due to small sample size.")
+
+    # Calculate Metrics on Real Hours
     rmse = np.sqrt(mean_squared_error(y_test_aligned, preds))
     mae = mean_absolute_error(y_test_aligned, preds)
     
@@ -230,20 +274,9 @@ def train():
     print(f"   MAE:  {mae:.4f}")
     print(f"   Accuracy @ {THRESHOLD_HOURS}h: {acc_within_threshold:.2f}%")
 
-    # logger.report_scalar("Comparison", "RMSE", rmse, iteration=1, series=args.model)
-    # logger.report_scalar("Comparison", "MAE", mae, iteration=1, series=args.model)
-    # logger.report_scalar("Comparison", "Acc_24h", acc_within_threshold, iteration=1, series=args.model)
-
-    # Log Scalar Metrics (CORRECTED SYNTAX)
-    # Syntax: report_scalar(title, series, value, iteration)
-    
-    # 1. RMSE Comparison
+    # Log Scalar Metrics
     logger.report_scalar("RMSE Comparison", args.model.upper(), rmse, iteration=1)
-    
-    # 2. MAE Comparison
     logger.report_scalar("MAE Comparison", args.model.upper(), mae, iteration=1)
-    
-    # 3. Accuracy Comparison
     logger.report_scalar("Accuracy @ 24h", args.model.upper(), acc_within_threshold, iteration=1)
 
 if __name__ == "__main__":

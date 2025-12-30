@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
-import { Database, Thermometer, Zap, Activity, Play, Pause, AlertCircle } from 'lucide-react';
+import { Database, Thermometer, Zap, Activity, Play, Pause, AlertCircle, Trophy } from 'lucide-react';
 
 // Types
 interface PredictionRow {
@@ -23,7 +23,8 @@ interface Telemetry {
 const MetricCard = ({ label, value, unit, icon: Icon, variant = 'cyan' }: any) => {
   const styles = {
     cyan: { iconBg: 'bg-cyan-500/10', iconText: 'text-cyan-400', stroke: '#06b6d4' },
-    rose: { iconBg: 'bg-rose-500/10', iconText: 'text-rose-400', stroke: '#f43f5e' }
+    rose: { iconBg: 'bg-rose-500/10', iconText: 'text-rose-400', stroke: '#f43f5e' },
+    emerald: { iconBg: 'bg-emerald-500/10', iconText: 'text-emerald-400', stroke: '#10b981' }
   };
   const theme = styles[variant as keyof typeof styles] || styles.cyan;
 
@@ -66,7 +67,7 @@ export default function LivePredictions() {
     if (!isPlaying) {
         // RESET logic: Tell backend to start from index 0
         try {
-            await fetch('/api/reset', { method: 'POST' }); // Relative path
+            await fetch('/api/reset', { method: 'POST' });
             setData([]); // Clear old table data
             setError(null);
             setIsPlaying(true);
@@ -77,6 +78,14 @@ export default function LivePredictions() {
     } else {
         setIsPlaying(false);
     }
+  };
+
+  // Helper: Format RUL (Assumes Backend now sends correct unscaled hours)
+  // If backend is still sending scaled values (e.g. 0.8), you would need to unscale here, 
+  // but ideally the backend API should do the inverse_transform.
+  const formatRUL = (val: number | undefined) => {
+    if (val === undefined || val === null) return '--';
+    return `${val.toFixed(1)}h`; 
   };
 
   // 2. Fetch Data from Backend
@@ -101,12 +110,16 @@ export default function LivePredictions() {
 
       setTelemetry(json.telemetry || { motor_current: 0, oil_temp: 0, pressure: 0, vibration: 0 });
 
+      // Create new row with LSTM as the primary metric
       const newRow: PredictionRow = {
         id: json.index,
         time: json.timestamp ? json.timestamp.substring(11, 19) : "--:--:--",
-        gru_rul: `${(json.predictions?.GRU || 0).toFixed(1)}h`,
-        cnn_rul: `${(json.predictions?.CNN || 0).toFixed(1)}h`,
-        lstm_rul: `${(json.predictions?.LSTM || 0).toFixed(1)}h`,
+        
+        // Prioritize LSTM (Champion)
+        lstm_rul: formatRUL(json.predictions?.LSTM),
+        gru_rul: formatRUL(json.predictions?.GRU),
+        cnn_rul: formatRUL(json.predictions?.CNN),
+        
         status: json.status || "UNKNOWN"
       };
 
@@ -168,7 +181,10 @@ export default function LivePredictions() {
       {/* 3. Data Table */}
       <div className="bg-slate-800/40 backdrop-blur-md rounded-2xl border border-white/5 overflow-hidden flex flex-col min-h-[500px]">
         <div className="p-6 border-b border-white/5 flex justify-between items-center bg-slate-900/20">
-            <h3 className="font-bold text-white">Live Model Consensus</h3>
+            <div className="flex items-center gap-3">
+                <h3 className="font-bold text-white">Live Model Consensus</h3>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-primary text-slate-900">LSTM CHAMPION</span>
+            </div>
             <div className="flex items-center gap-4">
                 <span className="text-xs text-slate-500 font-mono hidden sm:inline-block">Source: Live Backend Stream</span>
                 {isPlaying && (
@@ -184,9 +200,12 @@ export default function LivePredictions() {
             <thead className="bg-slate-900/50 text-xs text-slate-400 uppercase font-medium sticky top-0 z-10 backdrop-blur-sm">
                 <tr>
                     <th className="py-4 px-6 text-slate-500">Timestamp</th>
-                    <th className="py-4 px-6 text-primary">GRU</th>
-                    <th className="py-4 px-6 text-blue-400">CNN</th>
-                    <th className="py-4 px-6 text-indigo-400">LSTM</th>
+                    {/* LSTM is now the Primary (Champion) Column */}
+                    <th className="py-4 px-6 text-primary flex items-center gap-2">
+                        LSTM <Trophy size={12} />
+                    </th>
+                    <th className="py-4 px-6 text-blue-400">GRU</th>
+                    <th className="py-4 px-6 text-slate-500">CNN</th>
                     <th className="py-4 px-6 text-right">Consensus Status</th>
                 </tr>
             </thead>
@@ -201,9 +220,22 @@ export default function LivePredictions() {
                   data.map((p) => (
                   <tr key={p.id} className="hover:bg-white/5 transition-colors group animate-in fade-in slide-in-from-top-1 duration-300">
                       <td className="py-4 px-6 font-mono text-slate-400">{p.time}</td>
-                      <td className="py-4 px-6 font-mono font-bold text-white text-lg">{p.gru_rul}</td>
-                      <td className="py-4 px-6 font-mono text-slate-300">{p.cnn_rul}</td>
-                      <td className="py-4 px-6 font-mono text-slate-300">{p.lstm_rul}</td>
+                      
+                      {/* LSTM Column (Primary) */}
+                      <td className="py-4 px-6 font-mono font-bold text-white text-lg shadow-[0_0_15px_rgba(6,182,212,0.1)]">
+                          {p.lstm_rul}
+                      </td>
+                      
+                      {/* GRU Column (Secondary) */}
+                      <td className="py-4 px-6 font-mono text-blue-300">
+                          {p.gru_rul}
+                      </td>
+                      
+                      {/* CNN Column (Tertiary) */}
+                      <td className="py-4 px-6 font-mono text-slate-500">
+                          {p.cnn_rul}
+                      </td>
+                      
                       <td className="py-4 px-6 text-right">
                           <span className={`inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-wide border ${
                               p.status === 'NORMAL' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 
